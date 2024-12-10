@@ -23,7 +23,7 @@ String password = "";
 
 #define LSERVO 12 //19 //12 //19 //12 //19
 #define RSERVO 13 //18 //13 //18 //13 //18
-#define HSERVO 14
+#define HSERVO 27 //14
 
 // Servo objects
 Servo servo1; 
@@ -45,6 +45,9 @@ size_t receivedSize = 0;    // Total size of data received
 size_t totalSize = 0;       // Expected total size of data
 
 int drawDelay = 0;
+
+int penUpAngle = 70;
+int penDownAngle = 20;
 
 Preferences preferences;
 
@@ -72,7 +75,9 @@ void setupTaskWDT(uint32_t timeout_ms) {
 void HandleOTA()
 {
 
-  ArduinoOTA.setPassword("");
+  ArduinoOTA.setPassword("12345");
+  ArduinoOTA.setTimeout(60000);
+
   // Start OTA
   ArduinoOTA.onStart([]() {
     String type;
@@ -214,12 +219,20 @@ bool inverseKinematics(float x, float y, float &theta1_deg, float &theta2_deg) {
 
 void penUp()
 {
-  servo3.write(180);
+  for (int i=penDownAngle; i<=penUpAngle; i++)
+  {
+    servo3.write(i);
+    delay(50);
+  }
 }
 
 void penDown()
 {
-  servo3.write(0);
+  for (int i=penUpAngle; i>=penDownAngle; i--)
+  {
+    servo3.write(i);
+    delay(50);
+  }
 }
 
 void drawLine(float sx, float sy, float ex, float ey, int steps) {
@@ -228,6 +241,8 @@ void drawLine(float sx, float sy, float ex, float ey, int steps) {
   Serial.print(", end x="); Serial.print(ex);  
   Serial.print(", end y="); Serial.print(ey);
   Serial.print(", steps: "); Serial.println(steps);
+
+  penDown();
 
   // Calculate step increments for x and y
   float xStep = (ex - sx) / steps;
@@ -323,12 +338,15 @@ void drawImage() {
     }
 
     float theta1, theta2;
+    bool penNeedsDown = true;
 
     Serial.println("Starting to draw the image...");
     for (int i = 0; i < arraySize; i++) {
         if (imageArray[i].x == -300 && imageArray[i].y == -300) {
             Serial.println("Up Stroke");
             penUp();
+            penNeedsDown=true;
+            delay(250);
             continue;
         }
         
@@ -340,7 +358,11 @@ void drawImage() {
         bool res = inverseKinematics(imageArray[i].x, imageArray[i].y, theta1, theta2);
         if (res) {
             // Send angles to the servos
-            penDown();
+            if (penNeedsDown){
+              penDown();            
+              penNeedsDown=false;
+            }
+            
             servo1.write(theta1);
             servo2.write(theta2);
 
@@ -531,8 +553,8 @@ void setup() {
 
     Serial.println("SPIFFS mounted successfully.");
 
-    servo1.attach(LSERVO);    // Attach servo1 to GPIO19
-    servo2.attach(RSERVO);    // Attach servo2 to GPIO18
+    servo1.attach(LSERVO);   
+    servo2.attach(RSERVO);   
     servo3.attach(HSERVO);
 
     //WiFiConnect();  
@@ -590,6 +612,7 @@ void displayHelp() {
     Serial.println("- Type 'help' to see these instructions again.");
     Serial.println("- fetch_ssid: Print the stored WiFi SSID");
     Serial.println("- fetch_pw: Print the stored WiFi password");
+    Serial.println("- U<angle>: Move the 3rd servo (pen up/down) to specific angle");
 }
 
 int countOccurrences(const String &str, const String &sub) {
@@ -999,14 +1022,20 @@ void loop() {
             float y = input.substring(input.indexOf(',') + 1).toFloat();
             Serial.print("Moving servos to theta1="); Serial.print(x); Serial.print(", theta2="); Serial.print(y);                        
             servo1.write(x); servo2.write(y);
-        }       
+        }    
+        else if (input.startsWith("U")) {
+            float angle = input.substring(1).toFloat();
+            Serial.print("Moving servo3 to theta1="); Serial.println(angle);
+            servo3.write(angle);
+
+        }   
         
-        else if (input.indexOf('/') > -1) {
-            //drawCircle(4, 15, 6, 1500);
-            drawCircle(4, 15, 6, 300, false);
-            drawCircle(0, 15, 6, 300, false);
-            drawCircle(8, 15, 6, 300, false);
-        }        
+        // else if (input.indexOf('/') > -1) {
+        //     //drawCircle(4, 15, 6, 1500);
+        //     drawCircle(4, 15, 6, 300, false);
+        //     drawCircle(0, 15, 6, 300, false);
+        //     drawCircle(8, 15, 6, 300, false);
+        // }        
         else if (input.startsWith("set_ssid ")) {
             
             String temp = input.substring(8); // Extract everything after "set_ssid "
