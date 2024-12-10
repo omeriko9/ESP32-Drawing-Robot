@@ -23,10 +23,12 @@ String password = "";
 
 #define LSERVO 12 //19 //12 //19 //12 //19
 #define RSERVO 13 //18 //13 //18 //13 //18
+#define HSERVO 14
 
 // Servo objects
 Servo servo1; 
 Servo servo2; 
+Servo servo3;
 
 // Define the Pair struct
 struct Pair {
@@ -69,6 +71,8 @@ void setupTaskWDT(uint32_t timeout_ms) {
 
 void HandleOTA()
 {
+
+  ArduinoOTA.setPassword("");
   // Start OTA
   ArduinoOTA.onStart([]() {
     String type;
@@ -208,6 +212,16 @@ bool inverseKinematics(float x, float y, float &theta1_deg, float &theta2_deg) {
     return true;
 }
 
+void penUp()
+{
+  servo3.write(180);
+}
+
+void penDown()
+{
+  servo3.write(0);
+}
+
 void drawLine(float sx, float sy, float ex, float ey, int steps) {
   Serial.print("Starting line drawing, parameters: start x="); Serial.print(sx);
   Serial.print(", start y="); Serial.print(sy);   
@@ -314,6 +328,7 @@ void drawImage() {
     for (int i = 0; i < arraySize; i++) {
         if (imageArray[i].x == -300 && imageArray[i].y == -300) {
             Serial.println("Up Stroke");
+            penUp();
             continue;
         }
         
@@ -325,6 +340,7 @@ void drawImage() {
         bool res = inverseKinematics(imageArray[i].x, imageArray[i].y, theta1, theta2);
         if (res) {
             // Send angles to the servos
+            penDown();
             servo1.write(theta1);
             servo2.write(theta2);
 
@@ -517,6 +533,7 @@ void setup() {
 
     servo1.attach(LSERVO);    // Attach servo1 to GPIO19
     servo2.attach(RSERVO);    // Attach servo2 to GPIO18
+    servo3.attach(HSERVO);
 
     //WiFiConnect();  
      
