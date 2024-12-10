@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drawing App with Smoothing Toggle</title>
+  <style>
+    body {
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: Arial, sans-serif;
+    }
+
+    #controls {
+      margin-bottom: 10px;
+      display: flex;
+      gap: 10px;
+    }
+
+    #drawingZone {
+      border: 2px solid black;
+      width: 80vw;
+      height: 60vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background-color: #f9f9f9;
+    }
+
+    canvas {
+      display: block;
+      touch-action: none; /* Prevent scrolling on touch devices */
+    }
+  </style>
+</head>
+<body>
+  <div id="controls" style="margin: 5px">
+    <label>
+      <input type="checkbox" id="smoothingCheckbox" checked>
+      Enable Smoothing
+    </label>
+    <button id="backButton">Back</button>
+    <button id="clearButton">Clear</button>
+    <button id="uploadDrawingButton">Upload Drawing</button>
+    <button id="drawButton" style="cursor: pointer; background-color: #521BCF;color: yellow;">Draw</button>
+    <label for="fileInput" style="cursor: pointer; background-color: #007BFF; color: white; padding: 10px; border-radius: 5px; display: inline-block;">
+       Upload File
+    </label>
+    <input type="file" id="fileInput" style="display: none;" onchange="handleFileUpload(event)" />
+    
+  </div>
+
+  <div id="drawingZone">
+    <canvas id="drawingCanvas"></canvas>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('drawingCanvas');
+    const ctx = canvas.getContext('2d');
+    const smoothingCheckbox = document.getElementById('smoothingCheckbox');
+    const backButton = document.getElementById('backButton');
+    const clearButton = document.getElementById('clearButton');
+    const uploadDrawingButton = document.getElementById('uploadDrawingButton');
+    const drawButton = document.getElementById('drawButton');
+    const uploadButton = document.getElementById('fileUploadButton');
+
+    const drawingZone = document.getElementById('drawingZone');
+
+    const savedStrokes = []; // Global array to store all strokes
+
+    // Set canvas size to match the drawing zone
+    const resizeCanvas = () => {
+      canvas.width = drawingZone.clientWidth;
+      canvas.height = drawingZone.clientHeight;
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = 'black';
+    };
+
+    resizeCanvas();
+
+    // Drawing properties
+   
+
+    let isDrawing = false; // Track if drawing
+    let points = []; // Store the points of the current stroke
+
+    // Start drawing
+    const startDrawing = (event) => {
+      isDrawing = true;
+      points = [{ x: getX(event), y: getY(event) }];
+    };
+
+    // Stop drawing
+    const stopDrawing = () => {
+      if (!isDrawing) return;
+      isDrawing = false;
+
+      // Save the current stroke to savedStrokes
+      savedStrokes.push([...points]);
+
+      points = [];
+    };
+
+    // Draw on canvas
+    const draw = (event) => {
+      if (!isDrawing) return;
+
+      const point = { x: getX(event), y: getY(event) };
+      points.push(point);
+
+      redrawCanvas();
+    };
+
+    // Redraw everything (previous strokes + current stroke)
+    const redrawCanvas = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Redraw all saved strokes
+      savedStrokes.forEach((stroke) => drawStroke(stroke, smoothingCheckbox.checked));
+
+      // Redraw current stroke
+      drawStroke(points, smoothingCheckbox.checked);
+    };
+
+    // Draw a single stroke (smoothed or not)
+    const drawStroke = (stroke, smooth) => {
+      if (stroke.length < 2) return;
+
+      ctx.beginPath();
+      ctx.moveTo(stroke[0].x, stroke[0].y);
+
+      if (smooth) {
+        // Use smoothing algorithm for general curves
+        for (let i = 1; i < stroke.length - 1; i++) {
+          const midPoint = {
+            x: (stroke[i].x + stroke[i + 1].x) / 2,
+            y: (stroke[i].y + stroke[i + 1].y) / 2, 
+          };
+          ctx.quadraticCurveTo(stroke[i].x, stroke[i].y, midPoint.x, midPoint.y);
+        }
+        ctx.lineTo(stroke[stroke.length - 1].x, stroke[stroke.length - 1].y);
+      } else {
+        // Draw as straight lines
+        stroke.forEach((point) => ctx.lineTo(point.x, point.y));
+      }
+
+      ctx.stroke();
+    };
+
+    // "Back" button functionality to remove the last stroke
+    backButton.addEventListener('click', () => {
+      if (savedStrokes.length > 0) {
+        savedStrokes.pop();
+        redrawCanvas(); 
+      }
+    });
+
+    clearButton.addEventListener('click', () => {      
+        savedStrokes.length = 0;
+        redrawCanvas(); 
+    });
+    
+
+   drawButton.addEventListener("click", () => {
+
+      fetch("/draw", {
+          method: "GET",                    
+      })
+          .then(response => response.text())
+          .then(data => {
+              console.log("Response from ESP32:", data);
+          })
+          .catch(error => {
+              console.error("Error during fetch:", error);
+          });
+
+   });
+
+
+   uploadDrawingButton.addEventListener("click", () => {
+       if (!savedStrokes || savedStrokes.length === 0) {
+           console.error("Saved Strokes array is empty or undefined.");
+           return;
+       }
+
+       const xMin = -4, xMax = 4; // Destination range for x
+       const yMin = 10, yMax = 18; // Destination range for y
+
+       let minY = Infinity, maxY = -Infinity;
+
+       for (const stroke of savedStrokes) {
+           for (const coord of stroke) {
+               if (typeof coord.y !== "number") {
+                   console.error("Non-numeric coord.y:", coord.y);
+                   return;
+               }
+               if (coord.y < minY) minY = coord.y;
+               if (coord.y > maxY) maxY = coord.y;
+           }
+       }
+
+       console.log(`Actual Y range in savedStrokes: minY=${minY}, maxY=${maxY}`);
+
+       const interpolate = (value, srcMin, srcMax, dstMin, dstMax) => {
+           if (srcMax === srcMin) {
+               console.error("Source range cannot be zero.");
+               return dstMin; // Fallback value
+           }
+           return dstMin + ((value - srcMin) * (dstMax - dstMin)) / (srcMax - srcMin);
+       };
+
+       const buffer = new ArrayBuffer(savedStrokes.flat().length * 2 * 4);
+       const floatView = new Float32Array(buffer);
+
+       let index = 0;
+
+       for (let i = 0; i < savedStrokes.length; i++) {
+           const stroke = savedStrokes[i];
+
+           for (const coord of stroke) {
+               const interpolatedX = interpolate(coord.x, 0, 1023, xMin, xMax);
+               const interpolatedY = interpolate(coord.y, minY, maxY, yMin, yMax); // Use actual Y range
+
+               if (interpolatedY < yMin || interpolatedY > yMax) {
+                   console.error(`Interpolated Y (${interpolatedY}) is out of bounds!`);
+               }
+
+               floatView[index++] = interpolatedX;
+               floatView[index++] = interpolatedY;
+           }
+
+           if (i < savedStrokes.length - 1) {
+               floatView[index++] = -300;
+               floatView[index++] = -300;
+           }
+       }
+
+       console.log("Serialized Float32Array Data with Interpolation:", [...floatView]);
+
+       fetch("/upload2", {
+           method: "POST",
+           headers: { "Content-Type": "application/octet-stream" },
+           body: floatView,
+       })
+           .then(response => response.text())
+           .then(data => {
+               console.log("Response from ESP32:", data);
+           })
+           .catch(error => {
+               console.error("Error during fetch:", error);
+           });
+   });
+
+
+
+    
+
+
+    // Get X, Y coordinates from mouse or touch events
+    const getX = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      return (event.touches ? event.touches[0].clientX : event.clientX) - rect.left;
+    };
+
+    const getY = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      return (event.touches ? event.touches[0].clientY : event.clientY) - rect.top;
+    };
+
+    // Mouse events
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mousemove', draw);
+
+    // Touch events
+    canvas.addEventListener('touchstart', startDrawing);
+    canvas.addEventListener('touchend', stopDrawing);
+    canvas.addEventListener('touchmove', draw);
+
+    // Resize canvas on window resize
+    window.addEventListener('resize', () => {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = canvas.width;
+      tempCanvas.height = canvas.height;
+      tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
+      resizeCanvas();
+      ctx.drawImage(tempCanvas, 0, 0);
+    });
+
+
+    function handleFileUpload(event) {
+        const file = event.target.files[0]; // Get the selected file
+
+        if (!file) {
+            alert("Please select a file to upload.");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", file, file.name);
+
+        fetch("/uploadFile", {
+            method: "POST",
+            body: formData,
+        })
+        .then(response => response.text())
+        .then(data => {
+            console.log("Response from ESP32:", data);
+            alert(data);
+        })
+        .catch(error => {
+            console.error("Error:", error);
+        });
+    }
+
+  </script>
+</body>
+</html>
