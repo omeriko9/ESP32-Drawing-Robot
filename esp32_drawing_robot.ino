@@ -2,14 +2,16 @@
 #include <Arduino.h>
 #include <math.h>
 #include <WiFi.h>
-//#include <WebServer.h>
+#include <WiFiManager.h>
 #include <Preferences.h>
-//#include "FS.h"
 #include "SPIFFS.h"
 #include <esp_task_wdt.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
-
+#include <ArduinoOTA.h>
+#include <nvs.h>
+#include <nvs_flash.h>
+#include <esp_task_wdt.h>
 
 
 float link1 = 9.5;  //11.5; 
@@ -40,7 +42,72 @@ AsyncWebServer server(80);
 size_t receivedSize = 0;    // Total size of data received
 size_t totalSize = 0;       // Expected total size of data
 
+int drawDelay = 0;
+
 Preferences preferences;
+
+WiFiManager wifiManager;
+bool portalUsed = false; // Flag to track if the portal was used
+
+
+
+void setupTaskWDT(uint32_t timeout_ms) {
+    // Deinitialize any existing WDT first
+    esp_task_wdt_deinit();
+
+    // Configure and initialize the WDT
+    const esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = timeout_ms,
+        .idle_core_mask = 0,    // Monitor all cores
+        .trigger_panic = true,  // Trigger panic on timeout
+    };
+    esp_task_wdt_init(&twdt_config);
+
+    // Add the current task to WDT monitoring
+    esp_task_wdt_add(xTaskGetCurrentTaskHandle());
+}
+
+void HandleOTA()
+{
+  // Start OTA
+  ArduinoOTA.onStart([]() {
+    String type;
+    if (ArduinoOTA.getCommand() == U_FLASH) {
+      type = "sketch";
+    } else { // U_SPIFFS
+      type = "filesystem";
+    }
+    Serial.println("Start updating " + type);
+  });
+
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\nEnd");
+  });
+
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+  });
+
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) {
+      Serial.println("Auth Failed");
+    } else if (error == OTA_BEGIN_ERROR) {
+      Serial.println("Begin Failed");
+    } else if (error == OTA_CONNECT_ERROR) {
+      Serial.println("Connect Failed");
+    } else if (error == OTA_RECEIVE_ERROR) {
+      Serial.println("Receive Failed");
+    } else if (error == OTA_END_ERROR) {
+      Serial.println("End Failed");
+    }
+  });
+
+  ArduinoOTA.begin();
+}
+
+
+
 
 void saveCredentials(const String &ssid, const String &password) {
     preferences.begin("wifi", false); // Open preferences with namespace "wifi"
@@ -263,7 +330,10 @@ void drawImage() {
 
             Serial.print(", theta1 = "); Serial.print(theta1);
             Serial.print(", theta2 = "); Serial.println(theta2);
-            //delay(10);
+            if (drawDelay > 0)
+            {
+              delay(drawDelay);
+            }
         } else {
             Serial.println("  Out of bounds");
         }
@@ -277,12 +347,165 @@ void drawImage() {
     Serial.println("Image drawing complete and memory freed.");
 }
 
+void saveCredential(const String &ssid, const String &password) {
+    int networkCount = preferences.getInt("networkCount", 0);
+
+    // Save the new SSID and password
+    String ssidKey = "ssid" + String(networkCount);
+    String passKey = "password" + String(networkCount);
+
+    preferences.putString(ssidKey.c_str(), ssid);
+    preferences.putString(passKey.c_str(), password);
+
+    // Update the network count
+    preferences.putInt("networkCount", networkCount + 1);
+
+    Serial.println("Credential saved: " + ssid);
+}
+
+
+std::vector<std::pair<String, String>> fetchAllCredentials() {
+    std::vector<std::pair<String, String>> networks;
+
+    int networkCount = preferences.getInt("networkCount", 0); // Get the number of saved networks
+    for (int i = 0; i < networkCount; i++) {
+        String ssidKey = "ssid" + String(i);
+        String passKey = "password" + String(i);
+
+        String ssid = preferences.getString(ssidKey.c_str(), "");
+        String password = preferences.getString(passKey.c_str(), "");
+
+        if (ssid != "" && password != "") {
+            networks.push_back(std::make_pair(ssid, password));
+        }
+    }
+
+    return networks;
+}
+
+void clearAllCredentials() {
+    preferences.begin("wifi", false);
+
+    // Get the number of saved networks
+    int networkCount = preferences.getInt("networkCount", 0);
+
+    // Remove all stored SSID and password entries
+    for (int i = 0; i < networkCount; i++) {
+        String ssidKey = "ssid" + String(i);
+        String passKey = "password" + String(i);
+
+        preferences.remove(ssidKey.c_str());
+        preferences.remove(passKey.c_str());
+    }
+
+    // Reset the network count
+    preferences.putInt("networkCount", 0);
+
+    preferences.end();
+
+    // Clear Wi-Fi credentials from NVS
+    WiFi.disconnect(true);
+    delay(100); // Allow time for NVS to clear
+
+    // Reset WiFiManager saved settings
+    
+    wifiManager.resetSettings();
+
+    nvs_flash_erase();   // Erase all stored NVS data
+    nvs_flash_init();    // Reinitialize NVS
+    Serial.println("NVS reset completed.");
+
+    Serial.println("All Wi-Fi credentials cleared.");
+}
+
+#include "esp_task_wdt.h"
+
+void reenable_task_wdt() {
+    // Task Watchdog configuration
+    const esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 300000,     // Set a timeout of 5 seconds
+        .idle_core_mask = 0,    // Monitor all cores
+        .trigger_panic = false, // Don't trigger a panic; just reset
+    };
+
+    // Reinitialize the Task Watchdog
+    esp_task_wdt_init(&twdt_config);
+
+    // Register the current task for Task Watchdog monitoring
+    esp_task_wdt_add(xTaskGetCurrentTaskHandle());
+
+    // Optionally, register other tasks here
+}
+
+
+bool WiFiConnect() {
+    preferences.begin("wifi", false);
+
+    // Fetch saved credentials
+    std::vector<std::pair<String, String>> networks = fetchAllCredentials();
+
+    // Attempt to connect to each saved network
+    for (auto &network : networks) {
+        String ssid = network.first;
+        String password = network.second;
+
+        if (ssid != "" && password != "") {
+            WiFi.begin(ssid.c_str(), password.c_str());
+            Serial.println("Connecting to WiFi: " + ssid);
+            int attempts = 0;
+            while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+                delay(500);
+                Serial.print(".");
+                attempts++;
+            }
+            if (WiFi.status() == WL_CONNECTED) {
+                Serial.println("\nWiFi Connected! IP: " + WiFi.localIP().toString());
+                reenable_task_wdt();
+                return true; // Exit if connected
+            } else {
+                Serial.println("\nFailed to connect to WiFi: " + ssid);
+            }
+        }
+    }
+
+    Serial.println("No valid WiFi networks connected. Starting captive portal...");
+
+    // Start WiFiManager Captive Portal in non-blocking mode
+   
+
+    // Configuration portal callback
+    wifiManager.setSaveConfigCallback([]() {
+        Serial.println("Configuration saved.");
+
+        // Only restart if successfully connected
+        delay(500); // Allow Wi-Fi connection to complete
+        if (WiFi.status() == WL_CONNECTED) {
+            Serial.println("WiFi Configured and Connected. Restarting...");
+            ESP.restart();
+        } else {
+            Serial.println("WiFi credentials saved, but no connection yet.");
+        }
+    });
+  
+    // wifiManager.setConfigPortalBlocking(false); // Non-blocking mode
+    // wifiManager.setConfigPortalTimeout(300);   // Keep portal open for 5 minutes
+    // wifiManager.setAPCallback([](WiFiManager *wm) {
+    //     Serial.println("Captive portal is running. Open http://192.168.4.1/");
+    // });
+
+     // needed for WifiManager AP Portal
+    // esp_task_wdt_deinit();
+    wifiManager.autoConnect("Drawing_Robot_Wifi_Setup"); // Start the portal
+    return false;
+}
+
+
+
 void setup() {
     Serial.begin(115200);
-  
-    // Add the current task to the Watchdog monitoring list
-    esp_task_wdt_add(NULL);
 
+    setupTaskWDT(300000);
+       
     Serial.println("Free heap memory: " + String(ESP.getFreeHeap()) + " bytes");
 
     if (!SPIFFS.begin(true)) {
@@ -295,26 +518,23 @@ void setup() {
     servo1.attach(LSERVO);    // Attach servo1 to GPIO19
     servo2.attach(RSERVO);    // Attach servo2 to GPIO18
 
-    preferences.begin("wifi", false); // Initialize preferences
-    fetchCredentials(ssid, password);
-   
-    if (ssid != "" && password != "") {
-        WiFi.begin(ssid.c_str(), password.c_str());
-        Serial.println("Connecting to WiFi...");
-        int attempts = 0;
-        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-            delay(500);
-            Serial.print(".");
-            attempts++;
-        }
-        if (WiFi.status() == WL_CONNECTED) {
-            Serial.println("\nWiFi Connected! IP: " + WiFi.localIP().toString());
-        } else {
-            Serial.println("\nFailed to connect to WiFi.");
-        }
-    } else {
-        Serial.println("No WiFi credentials found.");
-    }
+    //WiFiConnect();  
+     
+    // Override startConfigPortal to set the portalUsed flag
+    wifiManager.setAPCallback([](WiFiManager* wm) {
+        portalUsed = true; // Set the flag when the portal starts
+        Serial.println("Captive portal started.");
+    });
+
+    wifiManager.autoConnect("Drawing_Robot_Wifi_Setup"); // Start the portal
+    
+    if (portalUsed) {
+        Serial.println("Captive portal was used. Restarting ESP...");
+        delay(1000);
+        ESP.restart(); // Restart the ESP
+    } 
+
+    HandleOTA();
 
     displayHelp(); // Display help instructions on startup
 
@@ -332,6 +552,8 @@ void displayHelp() {
     Serial.println("Commands:");
     Serial.println("- set_l1 <value>: Set link1 to <value>");
     Serial.println("- get_l1: return link1 value");
+    Serial.println("- get_wifi: return stored WiFi details");
+    Serial.println("- clear_wifi: Clear all WiFi SSIDs and Passwords");
     Serial.println("- set_l2 <value>: Set link2 to <value>");
     Serial.println("- get_l2: return link2 value");
     Serial.println("- set_bw <value>: Set baseWidth to <value>");
@@ -392,12 +614,30 @@ void startServer() {
         serveIndexPage(request); // Call the async handler
     });
 
-    server.on("/draw", HTTP_GET, [](AsyncWebServerRequest *request) {
-      request->send(200, "text/plain", "Drawing Started");
-      fetchArrayFromFile(); // Fetch the array and size from SPIFFS            
-      Serial.println("Sending array to drawImage...");
-      drawImage();
+    server.on("/draw", HTTP_GET, [](AsyncWebServerRequest *request) {        
+        if (request->hasParam("speedDelay")) {
+            
+            String speedDelayValue = request->getParam("speedDelay")->value();            
+            int parsedSpeedDelay = speedDelayValue.toInt();
+
+            
+            if (parsedSpeedDelay > 0) { // Ensure it's a positive integer
+                drawDelay = parsedSpeedDelay;
+                Serial.printf("Speed delay set to: %d\n", drawDelay);
+            } else {
+                Serial.println("Invalid speedDelay value received, using default.");
+            }
+        } else {
+            Serial.println("No speedDelay parameter provided, using default.");
+        }
+
+        request->send(200, "text/plain", "Drawing Started");
+        fetchArrayFromFile(); // Fetch the array and size from SPIFFS           
+        Serial.println("Sending array to drawImage...");
+        drawImage();
     });
+
+
     // Handle POST requests for large data
     server.on("/image_array", HTTP_POST, 
         [](AsyncWebServerRequest *request) {
@@ -636,8 +876,18 @@ void fetchArrayFromFile() {
 float x = 0, y = 0;
 
 void loop() {
+
+    if (WiFi.status() != WL_CONNECTED) {
+      
+        wifiManager.process(); // Handle captive portal tasks
+        delay(1);              // Yield to the system to prevent watchdog resets
+        esp_task_wdt_reset();
+        return;
+    }
+
     esp_task_wdt_reset();
-   
+    ArduinoOTA.handle();
+
     if (Serial.available() > 0) {
         String input = Serial.readStringUntil('\n');
         input.trim();
@@ -752,6 +1002,27 @@ void loop() {
                 Serial.println("Error: No SSID provided.");
             }
         }
+        else if (input.startsWith("get_wifi")) {
+            String s, p;
+            Serial.print("From old store method: ");
+            fetchCredentials(s, p);
+            Serial.print("SSID: "); Serial.print(ssid); Serial.print(", p/w: ");Serial.println(p);
+
+            std::vector<std::pair<String, String>> networks = fetchAllCredentials();
+            for (auto &network : networks) {
+                String ssid = network.first;
+                String password = network.second;
+
+                Serial.print("SSID: ");Serial.print(ssid); Serial.print(", p/w: ");Serial.println(password);
+            }
+        }
+        else if (input.startsWith("clear_wifi")) {
+            clearAllCredentials();
+            preferences.begin("wifi", false);
+            preferences.clear(); // Clear all keys in the "wifi" namespace
+            preferences.end();
+           
+        }
         else if (input.startsWith("set_pw ")) {
             Serial.println("Setting ssid password...");
             String temp = input.substring(7); // Extract everything after "set_pw "
@@ -759,13 +1030,7 @@ void loop() {
             password = temp; // Assign to password
             saveCredentials(ssid, password); // Save both password and existing SSID
             Serial.println("Password set.");
-        }
-        else if (input == "erase_credentials") {
-            preferences.begin("wifi", false);
-            preferences.clear(); // Clear all keys in the "wifi" namespace
-            preferences.end();
-            Serial.println("WiFi credentials erased from internal memory.");
-        }
+        }      
         else if (input.startsWith("help"))
         {
           displayHelp();

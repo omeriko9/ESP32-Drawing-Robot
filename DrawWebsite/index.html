@@ -37,21 +37,23 @@
   </style>
 </head>
 <body>
-  <div id="controls" style="margin: 5px">
-    <label>
-      <input type="checkbox" id="smoothingCheckbox" checked>
-      Enable Smoothing
-    </label>
-    <button id="backButton">Back</button>
-    <button id="clearButton">Clear</button>
-    <button id="uploadDrawingButton">Upload Drawing</button>
-    <button id="drawButton" style="cursor: pointer; background-color: #521BCF;color: yellow;">Draw</button>
-    <label for="fileInput" style="cursor: pointer; background-color: #007BFF; color: white; padding: 10px; border-radius: 5px; display: inline-block;">
-       Upload File
-    </label>
-    <input type="file" id="fileInput" style="display: none;" onchange="handleFileUpload(event)" />
-    
+  <div id="controls" style="margin: 5px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+      <label style="display: flex; align-items: center;">
+        <input type="checkbox" id="smoothingCheckbox" checked style="margin-right: 5px;">
+        Enable Smoothing
+      </label>
+      <button id="backButton">Back</button>
+      <button id="clearButton">Clear</button>
+      <label for="speedDelay" style="display: flex; align-items: center;">Speed Delay:</label>
+      <input type="textbox" id="speedDelay" style="margin: 0 5px;" value="0" />
+      <button id="uploadDrawingButton">Upload Drawing</button>
+      <button id="drawButton" style="cursor: pointer; background-color: #521BCF; color: yellow;">Draw</button>
+      <label for="fileInput" style="cursor: pointer; background-color: #007BFF; color: white; padding: 3px; border-radius: 5px; display: inline-block;">
+         Upload File
+      </label>
+      <input type="file" id="fileInput" style="display: none;" onchange="handleFileUpload(event)" />
   </div>
+
 
   <div id="drawingZone">
     <canvas id="drawingCanvas"></canvas>
@@ -167,7 +169,7 @@
 
    drawButton.addEventListener("click", () => {
 
-      fetch("/draw", {
+      fetch("/draw?speedDelay=" + speedDelay.value, {
           method: "GET",                    
       })
           .then(response => response.text())
@@ -233,10 +235,10 @@
                floatView[index++] = interpolatedY;
            }
 
-           if (i < savedStrokes.length - 1) {
-               floatView[index++] = -300;
-               floatView[index++] = -300;
-           }
+           // if (i < savedStrokes.length - 1) {
+           floatView[index++] = -300;
+           floatView[index++] = -300;
+           // }
        }
 
        console.log("Serialized Float32Array Data with Interpolation:", [...floatView]);
