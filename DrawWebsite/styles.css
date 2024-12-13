@@ -1,0 +1,60 @@
+/* styles.css */
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  font-family: Arial, sans-serif;
+}
+
+#controls {
+  margin-bottom: 10px;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-group {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+#drawingZone {
+  border: 2px solid black;
+  width: 80vw;
+  height: 60vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #f9f9f9;
+}
+
+
+canvas {
+  display: block;
+  touch-action: none; /* Prevent scrolling on touch devices */
+}
+
+.draw-button {
+  cursor: pointer;
+  background-color: #521BCF;
+  color: yellow;
+}
+
+.file-label {
+  cursor: pointer;
+  background-color: #007BFF;
+  color: white;
+  padding: 3px;
+  border-radius: 5px;
+  display: inline-block;
+}
+
+
+#fileInput {
+    display: none;
+}

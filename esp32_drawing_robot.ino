@@ -14,9 +14,9 @@
 #include <esp_task_wdt.h>
 
 
-float link1 = 9.5;  //11.5; 
-float link2 = 10; //11.5;
-float baseWidth = 7.25;
+float link1 = 10;  //11.5; 
+float link2 = 12.5; //11.5;
+float baseWidth = 7.0;
 
 String ssid = "";
 String password = "";
@@ -46,14 +46,28 @@ size_t totalSize = 0;       // Expected total size of data
 
 int drawDelay = 0;
 
-int penUpAngle = 70;
-int penDownAngle = 20;
+int penUpAngle = 63;
+int penDownAngle = 30;
+
+float t1correction = 0;
+float t2correction = 0;
 
 Preferences preferences;
 
 WiFiManager wifiManager;
 bool portalUsed = false; // Flag to track if the portal was used
 
+void inline lwrite(float angle)
+{
+  Serial.print("Moving left servo to angle: " + String(angle) + ", actual angle: " + String(angle+t2correction));
+  servo1.write(angle+t1correction);
+}
+
+void inline rwrite(float angle)
+{
+  Serial.print("Moving right servo to angle: " + String(angle) + ", actual angle: " + String(angle+t2correction));
+  servo2.write(angle+t2correction);
+}
 
 
 void setupTaskWDT(uint32_t timeout_ms) {
@@ -210,7 +224,8 @@ bool inverseKinematics(float x, float y, float &theta1_deg, float &theta2_deg) {
     theta1_deg = rad2deg(theta1);
     theta2_deg = rad2deg(theta2);
 
-    theta2_deg+=8;
+    //theta1_deg += t1correction;
+    //theta2_deg += t2correction;
 
     esp_task_wdt_reset();
 
@@ -222,7 +237,7 @@ void penUp()
   for (int i=penDownAngle; i<=penUpAngle; i++)
   {
     servo3.write(i);
-    delay(50);
+    delay(5);
   }
 }
 
@@ -231,7 +246,7 @@ void penDown()
   for (int i=penUpAngle; i>=penDownAngle; i--)
   {
     servo3.write(i);
-    delay(50);
+    delay(35);
   }
 }
 
@@ -270,9 +285,9 @@ void drawLine(float sx, float sy, float ex, float ey, int steps) {
     Serial.print(", theta2 = ");
     Serial.println(theta2);
 
-    // Move the servos to the calculated angles
-    servo1.write(theta1);
-    servo2.write(theta2);
+    // Move the servos to the calculated angles    
+    lwrite(theta1);    
+    rwrite(theta2);
 
     // Optionally, add a small delay between movements
     delay(30);
@@ -316,8 +331,8 @@ void drawCircle(float cx, float cy, float radius, int steps, bool toMove = true)
 
     if (toMove)
     {
-      servo1.write(theta1);
-      servo2.write(theta2);
+       lwrite(theta1);    
+       rwrite(theta2);
     }
 
     //delay(30);
@@ -339,18 +354,21 @@ void drawImage() {
 
     float theta1, theta2;
     bool penNeedsDown = true;
+    
+
 
     Serial.println("Starting to draw the image...");
+
     for (int i = 0; i < arraySize; i++) {
+        esp_task_wdt_reset();
+
         if (imageArray[i].x == -300 && imageArray[i].y == -300) {
             Serial.println("Up Stroke");
             penUp();
             penNeedsDown=true;
             delay(250);
             continue;
-        }
-        
-        esp_task_wdt_reset();
+        }               
 
         Serial.print("X="); Serial.print(imageArray[i].x); Serial.print(", Y="); Serial.print(imageArray[i].y);
 
@@ -358,19 +376,17 @@ void drawImage() {
         bool res = inverseKinematics(imageArray[i].x, imageArray[i].y, theta1, theta2);
         if (res) {
             // Send angles to the servos
-            if (penNeedsDown){
-              penDown();            
-              penNeedsDown=false;
-            }
-            
-            servo1.write(theta1);
-            servo2.write(theta2);
+            lwrite(theta1); rwrite(theta2);           
 
-            Serial.print(", theta1 = "); Serial.print(theta1);
-            Serial.print(", theta2 = "); Serial.println(theta2);
+            //Serial.print(", theta1 = "); Serial.print(theta1);
+            //Serial.print(", theta2 = "); Serial.println(theta2);
             if (drawDelay > 0)
             {
               delay(drawDelay);
+            }
+            if (penNeedsDown){
+              penDown();            
+              penNeedsDown=false;
             }
         } else {
             Serial.println("  Out of bounds");
@@ -597,6 +613,10 @@ void displayHelp() {
     Serial.println("- get_l2: return link2 value");
     Serial.println("- set_bw <value>: Set baseWidth to <value>");
     Serial.println("- get_bw: return baseWidth value");
+    Serial.println("- get_penup: return Pen up servo3 value");
+    Serial.println("- set_penup: Sets Pen up servo3 value");
+    Serial.println("- get_pendown: return Pen down servo3 value");
+    Serial.println("- set_pendown: Sets Pen down servo3 value");
     Serial.println("- C <x> <y> <radius> <steps>: Draw a circle with specified parameters");
     Serial.println("- LX*<y>: Draw a line parallel to X-axis at y = <y>");
     Serial.println("- LY*<x>: Draw a line parallel to Y-axis at x = <x>");
@@ -613,6 +633,11 @@ void displayHelp() {
     Serial.println("- fetch_ssid: Print the stored WiFi SSID");
     Serial.println("- fetch_pw: Print the stored WiFi password");
     Serial.println("- U<angle>: Move the 3rd servo (pen up/down) to specific angle");
+    Serial.println("- get_t1corr: Get left servo angle correction");
+    Serial.println("- get_t2corr: Get right servo angle correction");
+    Serial.println("- set_t1corr <angle>: Set left servo angle correction");
+    Serial.println("- set_t2corr <angle>: Set right servo angle correction");
+    Serial.println("- getfiles: Returns a list of files on the SPIFFS FS");
 }
 
 int countOccurrences(const String &str, const String &sub) {
@@ -650,18 +675,71 @@ void serveIndexPage(AsyncWebServerRequest *request) {
 
 
 void startServer() {
+
+
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         serveIndexPage(request); // Call the async handler
     });
 
-    server.on("/draw", HTTP_GET, [](AsyncWebServerRequest *request) {        
+    // Serve the JavaScript file
+    server.serveStatic("/script.js", SPIFFS, "/script.js");
+
+    // Serve the CSS file
+    server.serveStatic("/styles.css", SPIFFS, "/styles.css");
+
+    server.on("/penUp", HTTP_GET,[](AsyncWebServerRequest *request) { 
+       if (request->hasParam("down") && request->getParam("down")->value() == "true") {
+        Serial.println("Pen down request.");
+         penDown();
+         request->send(200, "text/plain", "OK");
+
+       }
+       else
+       {       
+        Serial.println("Pen up request.");
+        request->send(200, "text/plain", "OK");
+        penUp();
+       }
+    });
+
+    server.on("setCorrections", HTTP_GET,[](AsyncWebServerRequest *request) { 
+        float lc = request->getParam("lc")->value().toFloat();
+        float rc = request->getParam("rc")->value().toFloat();
+
+        Serial.println("Servo correction left=" + String(lc) + ", right =" + String(rc));
+
+        t1correction=lc;
+        t2correction=rc;
+
+        request->send(200, "text/plain", "OK");
+    });
+
+     server.on("/drawCircle", HTTP_GET,[](AsyncWebServerRequest *request) { 
+      
+        int x = request->getParam("x")->value().toFloat();
+        int y = request->getParam("y")->value().toFloat();
+        int r = request->getParam("r")->value().toFloat();
+        int s = request->getParam("s")->value().toFloat();
+        int lc = request->getParam("lc")->value().toFloat();
+        int rc = request->getParam("rc")->value().toFloat();
+
+        Serial.println("Drawing circle x=" + String(x) + ", y=" + String(y) +", r=" + String(r) +", steps: " + String(s) + ", lc: " + String(lc) + ", rc: " + String(rc));
+        t1correction=lc;
+        t2correction=rc;
+        drawCircle(x,y,r,s);
+        request->send(200, "text/plain", "OK");
+
+       
+    });
+
+    server.on("/draw", HTTP_GET, [](AsyncWebServerRequest *request) {   
+        Serial.println(request->url());  // Print the full URL     
         if (request->hasParam("speedDelay")) {
             
             String speedDelayValue = request->getParam("speedDelay")->value();            
             int parsedSpeedDelay = speedDelayValue.toInt();
 
-            
-            if (parsedSpeedDelay > 0) { // Ensure it's a positive integer
+            if (parsedSpeedDelay >= 0) { 
                 drawDelay = parsedSpeedDelay;
                 Serial.printf("Speed delay set to: %d\n", drawDelay);
             } else {
@@ -669,6 +747,24 @@ void startServer() {
             }
         } else {
             Serial.println("No speedDelay parameter provided, using default.");
+        }
+
+        if (request->hasParam("penUp")) {            
+            String tmpPenUp = request->getParam("penUp")->value();  
+            int iPenUp = tmpPenUp.toInt();
+            if (iPenUp > 0) {
+              penUpAngle = iPenUp;
+              Serial.print("Set pen up angle to: ");Serial.println(penUpAngle);
+            }
+        }
+
+        if (request->hasParam("penDown")) {            
+            String tmpPenDown = request->getParam("penDown")->value();  
+            int iPenDown = tmpPenDown.toInt();                                  
+            if (iPenDown > 0) {
+              penDownAngle = iPenDown;
+              Serial.print("Set pen down angle to: ");Serial.println(penDownAngle);
+            }
         }
 
         request->send(200, "text/plain", "Drawing Started");
@@ -913,6 +1009,38 @@ void fetchArrayFromFile() {
     file.close();
 }
 
+#include "SPIFFS.h"
+
+String listFilesOnSPIFFS() {
+    String fileList = ""; // String to hold the file list
+
+    if (!SPIFFS.begin(true)) {
+        return "Failed to initialize SPIFFS";
+    }
+
+    File root = SPIFFS.open("/");
+    if (!root || !root.isDirectory()) {
+        return "Failed to open SPIFFS root directory";
+    }
+
+    File file = root.openNextFile();
+    while (file) {
+        // Get file name
+        String fileName = file.name();
+
+        // Get file size in KB
+        size_t fileSize = file.size();
+        size_t fileSizeInKB = fileSize / 1024;
+
+        // Append to list
+        fileList += fileName + "," + String(fileSizeInKB) + "KB\r\n";
+
+        file = root.openNextFile(); // Move to next file
+    }
+
+    return fileList;
+}
+
 float x = 0, y = 0;
 
 void loop() {
@@ -961,6 +1089,39 @@ void loop() {
         else if (input.startsWith("get_bw")) {            
             Serial.println("baseWidth set to: " + String(baseWidth));
         } 
+        else if (input.startsWith("get_penup")) {            
+            Serial.println("Pen up servo angle: " + String(penUpAngle));
+        } 
+        else if (input.startsWith("set_penup")) {            
+            penUpAngle = input.substring(9).toInt();
+            Serial.println("Set pen up angle to: " + String(penUpAngle));
+        } 
+        else if (input.startsWith("get_pendown")) {            
+            Serial.println("Pen down servo angle: " + String(penDownAngle));
+        } 
+        else if (input.startsWith("set_pendown")) {            
+            penDownAngle = input.substring(11).toInt();
+            Serial.println("Set pen up angle to: " + String(penDownAngle));
+        } 
+        else if (input.startsWith("get_t1corr"))
+        {
+            Serial.println("Left servo correction: " + String(t1correction));
+        }
+        else if (input.startsWith("get_t2corr"))
+        {
+            Serial.println("Right servo correction: " + String(t2correction));            
+        }
+        else if (input.startsWith("set_t1corr"))
+        {            
+            t1correction = input.substring(10).toFloat();
+            Serial.println("Left servo correction: " + String(t1correction));
+        }
+        else if (input.startsWith("set_t2corr"))
+        {            
+            t2correction = input.substring(10).toFloat();
+            Serial.println("Right servo correction: " + String(t2correction));
+        }
+
         else if (input.startsWith("C ")) {
             String params = input.substring(2);            
             int spaceCount = countOccurrences(params, " ");
@@ -1014,14 +1175,14 @@ void loop() {
 
             inverseKinematics(x, y, t1, t2);
             Serial.print(", theta1: ");Serial.print(t1); Serial.print(", theta2: "); Serial.println(t2);
-            servo1.write(t1); servo2.write(t2);
+            lwrite(t1); rwrite(t2);
         }     
         else if (input.startsWith("-")) {
                         
             float x = input.substring(1, input.indexOf(',')).toFloat();
             float y = input.substring(input.indexOf(',') + 1).toFloat();
             Serial.print("Moving servos to theta1="); Serial.print(x); Serial.print(", theta2="); Serial.print(y);                        
-            servo1.write(x); servo2.write(y);
+            lwrite(x); rwrite(y);
         }    
         else if (input.startsWith("U")) {
             float angle = input.substring(1).toFloat();
@@ -1116,6 +1277,9 @@ void loop() {
         }
         else if (input == "stop_server") {          
           stopServer();
+        }
+        else if (input == "getfiles") {
+           Serial.println(listFilesOnSPIFFS());
         }
         else {
             Serial.println("Invalid command. Type 'help' for instructions.");
