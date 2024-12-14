@@ -14,8 +14,8 @@
 #include <esp_task_wdt.h>
 
 
-float link1 = 10;  //11.5; 
-float link2 = 12.5; //11.5;
+float link1 = 10.0;  //11.5; 
+float link2 = 11; //11.5;
 float baseWidth = 7.0;
 
 String ssid = "";
@@ -50,7 +50,7 @@ int penUpAngle = 63;
 int penDownAngle = 30;
 
 float t1correction = 0;
-float t2correction = 0;
+float t2correction = -30;
 
 Preferences preferences;
 
@@ -59,14 +59,16 @@ bool portalUsed = false; // Flag to track if the portal was used
 
 void inline lwrite(float angle)
 {
-  Serial.print("Moving left servo to angle: " + String(angle) + ", actual angle: " + String(angle+t2correction));
+  Serial.println("Moving left servo to angle: " + String(angle) + ", actual angle: " + String(angle+t2correction));
   servo1.write(angle+t1correction);
+  Serial.flush();
 }
 
 void inline rwrite(float angle)
 {
-  Serial.print("Moving right servo to angle: " + String(angle) + ", actual angle: " + String(angle+t2correction));
+  Serial.println("Moving right servo to angle: " + String(angle) + ", actual angle: " + String(angle+t2correction));
   servo2.write(angle+t2correction);
+  Serial.flush();
 }
 
 
@@ -198,7 +200,7 @@ bool forwardKinematics(float theta1_deg, float theta2_deg, float &x, float &y) {
 }
 
 // Inverse Kinematics
-bool inverseKinematics(float x, float y, float &theta1_deg, float &theta2_deg) {
+bool inverseKinematicsOld(float x, float y, float &theta1_deg, float &theta2_deg) {
     float RA = sqrt(x*x + y*y);
     float RB = sqrt((x - baseWidth)*(x - baseWidth) + y*y);
 
@@ -228,6 +230,56 @@ bool inverseKinematics(float x, float y, float &theta1_deg, float &theta2_deg) {
     //theta2_deg += t2correction;
 
     esp_task_wdt_reset();
+
+    return true;
+}
+
+bool inverseKinematics(float x, float y, float &theta1_deg, float &theta2_deg) {
+    // Distance from left hinge (0,0) to target
+    float RA = sqrtf(x*x + y*y);
+
+    // Distance from right hinge (baseWidth,0) to target
+    float dx = x - baseWidth;
+    float RB = sqrtf(dx*dx + y*y);
+    
+    // Basic reachability check: Each arm must at least be able to reach the point
+    float maxReach = link1 + link2;
+    if (RA > maxReach || RB > maxReach) {
+        return false; // Point is too far away
+    }
+
+    // Compute the cosines for the angles using law of cosines
+    float cos_g1 = (link1*link1 + RA*RA - link2*link2) / (2.0f * link1 * RA);
+    float cos_g2 = (link1*link1 + RB*RB - link2*link2) / (2.0f * link1 * RB);
+
+    // Check domain of acos
+    if (fabsf(cos_g1) > 1.0f || fabsf(cos_g2) > 1.0f) {
+        return false; // Cannot form a valid triangle
+    }
+
+    float g1 = acosf(cos_g1);
+    float g2 = acosf(cos_g2);
+
+    // Angles to the target from each base hinge
+    float phiA = atan2f(y, x);
+    float phiB = atan2f(y, x - baseWidth);
+
+    // We choose one consistent branch: "upper branch"
+    // θ1 = φA + g1
+    // θ2 = φB - g2
+    // If this branch doesn't reach the point properly, return false.
+
+    float theta1 = phiA + g1;
+    float theta2 = phiB - g2;
+
+    // Convert to degrees
+    theta1_deg = rad2deg(theta1);
+    theta2_deg = rad2deg(theta2);
+
+    // At this point, we have a candidate solution.
+    // Optional: Add checks for servo angle ranges if needed.
+    // For a symmetrical 5-bar, this should correspond to the chosen "elbow-up/elbow-down" configuration.
+    // If the user is confident that the chosen branch is correct for their geometry, we can return true here.
 
     return true;
 }
@@ -617,27 +669,36 @@ void displayHelp() {
     Serial.println("- set_penup: Sets Pen up servo3 value");
     Serial.println("- get_pendown: return Pen down servo3 value");
     Serial.println("- set_pendown: Sets Pen down servo3 value");
+    Serial.println("- get_t1corr: Get left servo angle correction");
+    Serial.println("- get_t2corr: Get right servo angle correction");
+    Serial.println("- set_t1corr <angle>: Set left servo angle correction");
+    Serial.println("- set_t2corr <angle>: Set right servo angle correction");
+    Serial.println("- get_delay: Get drawing delay in ms");
+    Serial.println("- set_delay <ms>: Set drawing delay");
+    Serial.println();
     Serial.println("- C <x> <y> <radius> <steps>: Draw a circle with specified parameters");
     Serial.println("- LX*<y>: Draw a line parallel to X-axis at y = <y>");
     Serial.println("- LY*<x>: Draw a line parallel to Y-axis at x = <x>");
     Serial.println("- <angle1> <angle2>: Write angles directly to servos");
     Serial.println("- -<t1>,<t2>: Moves servo to angles t1,t2");
     Serial.println("- +<x>,<y>: Move Servos to x,y position");
+    Serial.println("- D: Draw the stored image array using drawImage()");   
+    Serial.println("- U<angle>: Move the 3rd servo (pen up/down) to specific angle");
+    Serial.println();
     Serial.println("- set_ssid <ssid>: Set WiFi SSID");
     Serial.println("- set_pw <password>: Set WiFi password");
     Serial.println("- connect: Connect to WiFi using saved credentials");
     Serial.println("- start_server: Start HTTP server for image array");
-    Serial.println("- stop_server: Stop HTTP server");
-    Serial.println("- D: Draw the stored image array using drawImage()");
-    Serial.println("- Type 'help' to see these instructions again.");
+    Serial.println("- stop_server: Stop HTTP server (currently not implemented)");
+    
     Serial.println("- fetch_ssid: Print the stored WiFi SSID");
-    Serial.println("- fetch_pw: Print the stored WiFi password");
-    Serial.println("- U<angle>: Move the 3rd servo (pen up/down) to specific angle");
-    Serial.println("- get_t1corr: Get left servo angle correction");
-    Serial.println("- get_t2corr: Get right servo angle correction");
-    Serial.println("- set_t1corr <angle>: Set left servo angle correction");
-    Serial.println("- set_t2corr <angle>: Set right servo angle correction");
+    Serial.println("- fetch_pw: Print the stored WiFi password");    
     Serial.println("- getfiles: Returns a list of files on the SPIFFS FS");
+    Serial.println("- getfile <filename>: Returns content of the file chosen");
+    Serial.println("- delete <filename>: Deletes the chosen file");
+    Serial.println("- restart: Restart ESP32");
+    Serial.println();
+    Serial.println("- Type 'help' to see these instructions again.");
 }
 
 int countOccurrences(const String &str, const String &sub) {
@@ -733,39 +794,7 @@ void startServer() {
     });
 
     server.on("/draw", HTTP_GET, [](AsyncWebServerRequest *request) {   
-        Serial.println(request->url());  // Print the full URL     
-        if (request->hasParam("speedDelay")) {
-            
-            String speedDelayValue = request->getParam("speedDelay")->value();            
-            int parsedSpeedDelay = speedDelayValue.toInt();
-
-            if (parsedSpeedDelay >= 0) { 
-                drawDelay = parsedSpeedDelay;
-                Serial.printf("Speed delay set to: %d\n", drawDelay);
-            } else {
-                Serial.println("Invalid speedDelay value received, using default.");
-            }
-        } else {
-            Serial.println("No speedDelay parameter provided, using default.");
-        }
-
-        if (request->hasParam("penUp")) {            
-            String tmpPenUp = request->getParam("penUp")->value();  
-            int iPenUp = tmpPenUp.toInt();
-            if (iPenUp > 0) {
-              penUpAngle = iPenUp;
-              Serial.print("Set pen up angle to: ");Serial.println(penUpAngle);
-            }
-        }
-
-        if (request->hasParam("penDown")) {            
-            String tmpPenDown = request->getParam("penDown")->value();  
-            int iPenDown = tmpPenDown.toInt();                                  
-            if (iPenDown > 0) {
-              penDownAngle = iPenDown;
-              Serial.print("Set pen down angle to: ");Serial.println(penDownAngle);
-            }
-        }
+        Serial.println(request->url());  // Print the full URL                   
 
         request->send(200, "text/plain", "Drawing Started");
         fetchArrayFromFile(); // Fetch the array and size from SPIFFS           
@@ -773,6 +802,32 @@ void startServer() {
         drawImage();
     });
 
+    server.on("/set_params", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("t1")) t1correction = request->getParam("t1")->value().toFloat();
+        if (request->hasParam("t2")) t2correction = request->getParam("t2")->value().toFloat();
+        if (request->hasParam("link1")) link1 = request->getParam("link1")->value().toFloat();
+        if (request->hasParam("link2")) link2 = request->getParam("link2")->value().toFloat();
+        if (request->hasParam("penUp")) penUpAngle = request->getParam("penUp")->value().toFloat();
+        if (request->hasParam("penDown")) penDownAngle = request->getParam("penDown")->value().toFloat();
+        if (request->hasParam("baseWidth")) baseWidth = request->getParam("baseWidth")->value().toFloat();
+        if (request->hasParam("delay")) drawDelay = request->getParam("delay")->value().toInt();
+
+        Serial.println("Parameters updated successfully");
+        request->send(200, "text/plain", "Parameters updated successfully");
+    });
+
+
+    server.on("/get_params", HTTP_GET, [](AsyncWebServerRequest *request) {   
+
+        String resp = String(t1correction) + ";" + String(t2correction) + ";"
+                    + String(link1) + ";" + String(link2) + ";"
+                    + String(penUpAngle) + ";" + String(penDownAngle) +";"
+                    + String(baseWidth) + ";"
+                    + String(drawDelay) + ";";
+
+        request->send(200, "text/plain", resp);                                
+
+    });
 
     // Handle POST requests for large data
     server.on("/image_array", HTTP_POST, 
@@ -821,7 +876,7 @@ void startServer() {
         }
     });
 
-   server.on("/upload2", HTTP_POST, [](AsyncWebServerRequest *request) {
+   server.on("/uploadDrawing", HTTP_POST, [](AsyncWebServerRequest *request) {
     // This handles the case when the POST request finishes
     request->send(200, "text/plain", "Binary data received successfully");
 }, NULL, [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
@@ -878,6 +933,7 @@ void startServer() {
     "/uploadFile",
     HTTP_POST,
     [](AsyncWebServerRequest *request) {
+        Serial.printf("SPIFFS total: %u, used: %u\r\n", SPIFFS.totalBytes(), SPIFFS.usedBytes());
         // This will be called when the upload is complete
         request->send(200, "text/plain", "File uploaded successfully");
     },
@@ -886,7 +942,11 @@ void startServer() {
 
         if (index == 0) {
             // Start of file upload, create or overwrite the file
-            Serial.printf("Starting upload of file: %s\n", filename.c_str());
+            Serial.printf("Starting upload of file: %s\r\n", filename.c_str());
+            if (SPIFFS.exists("/" + filename)) {
+              Serial.print("Deleting existing file...");
+                SPIFFS.remove("/" + filename);
+            }
             uploadFile = SPIFFS.open("/" + filename, FILE_WRITE);
             if (!uploadFile) {
                 Serial.println("Failed to open file for writing");
@@ -901,18 +961,23 @@ void startServer() {
                 Serial.println("Failed to write all data to file");
             }
         }
+       
 
         // If this is the last chunk, close the file
         if (final) {
-            Serial.printf("Finished upload of file: %s\n", filename.c_str());
+            Serial.printf("Finished upload of file: %s\r\n", filename.c_str());
             if (uploadFile) {
                 uploadFile.close();
             }
         }
     });
 
+
     server.begin();
     Serial.println("Server started.");
+
+
+
 }
 
 
@@ -1008,8 +1073,30 @@ void fetchArrayFromFile() {
 
     file.close();
 }
+void readFileAndPrint(const char *filePath) {
+    if (!SPIFFS.exists(filePath)) {
+        Serial.printf("File not found: %s\r\n", filePath);
+        return;
+    }
 
-#include "SPIFFS.h"
+    File file = SPIFFS.open(filePath, FILE_READ);
+    if (!file) {
+        Serial.printf("Failed to open file: %s\r\n", filePath);
+        return;
+    }
+
+    Serial.printf("Reading file: %s\r\n", filePath);
+
+    // Read file content and print it
+    while (file.available()) {
+        String line = file.readStringUntil('\n');
+        Serial.print(line); // Print each line
+    }
+
+    file.close();
+    Serial.println("\r\nFile read complete.");
+}
+
 
 String listFilesOnSPIFFS() {
     String fileList = ""; // String to hold the file list
@@ -1121,7 +1208,6 @@ void loop() {
             t2correction = input.substring(10).toFloat();
             Serial.println("Right servo correction: " + String(t2correction));
         }
-
         else if (input.startsWith("C ")) {
             String params = input.substring(2);            
             int spaceCount = countOccurrences(params, " ");
@@ -1142,14 +1228,8 @@ void loop() {
         else if (input.startsWith("LX*")) {
             float y = input.substring(3).toFloat();
             Serial.println("Drawing line parallel to X-axis at y = " + String(y));
-
-            float steps = 100;
-            
-           
-            drawLine(-2,y,9,y, steps);
-             
-            
-            
+            float steps = 100;                       
+            drawLine(-2,y,9,y, steps);                                     
         } 
         else if (input.startsWith("LY*")) {
             float x = input.substring(3).toFloat();
@@ -1160,12 +1240,6 @@ void loop() {
             drawLine(x,5,x,12, steps);
              
         } 
-        // else if (input.indexOf(' ') > 0) {
-        //     float angle1 = input.substring(0, input.indexOf(' ')).toFloat();
-        //     float angle2 = input.substring(input.indexOf(' ') + 1).toFloat();            
-        //     servo1.write(angle1);
-        //     servo2.write(angle2);
-        // } 
         else if (input.startsWith("+")) {
             
             float t1, t2;
@@ -1189,14 +1263,7 @@ void loop() {
             Serial.print("Moving servo3 to theta1="); Serial.println(angle);
             servo3.write(angle);
 
-        }   
-        
-        // else if (input.indexOf('/') > -1) {
-        //     //drawCircle(4, 15, 6, 1500);
-        //     drawCircle(4, 15, 6, 300, false);
-        //     drawCircle(0, 15, 6, 300, false);
-        //     drawCircle(8, 15, 6, 300, false);
-        // }        
+        }                      
         else if (input.startsWith("set_ssid ")) {
             
             String temp = input.substring(8); // Extract everything after "set_ssid "
@@ -1278,8 +1345,40 @@ void loop() {
         else if (input == "stop_server") {          
           stopServer();
         }
+        else if (input == "restart") {
+          ESP.restart();
+        }
         else if (input == "getfiles") {
            Serial.println(listFilesOnSPIFFS());
+        }
+        else if (input.startsWith("getfile")) {
+           String fileName = "/" + input.substring(8);
+           fileName.trim();
+           readFileAndPrint(fileName.c_str());
+        }
+        else if (input.startsWith("delete")) {
+          String fileName = input.substring(7); // Extract file name
+          fileName.trim();
+          fileName = "/" + fileName; // Ensure proper format
+
+          Serial.println("Checking file: " + fileName);
+          if (SPIFFS.exists(fileName)) {
+              Serial.printf("Deleting file %s...", fileName.c_str());
+              if (SPIFFS.remove(fileName)) {
+                  Serial.println(" Success!");
+              } else {
+                  Serial.println(" Error: Failed to delete file.");
+              }
+          } else {
+              Serial.println("Error: File does not exist.");
+          }
+        }
+        else if (input.startsWith("get_delay")) {
+            Serial.printf("Speed delay: %dms\r\n", drawDelay);
+        }
+        else if (input.startsWith("set_delay")) {
+            drawDelay = input.substring(10).toInt(); // Extract file name
+            Serial.printf("Speed delay set to: %dms\r\n", drawDelay);
         }
         else {
             Serial.println("Invalid command. Type 'help' for instructions.");

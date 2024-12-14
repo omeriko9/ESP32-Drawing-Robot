@@ -18,13 +18,45 @@ let yMin = 5, yMax = 24;
 let isDrawing = false;
 let points = [];
 
+
+let mirrorXAxis = true;
+let mirrorYAxis = true;
+
+// Update the existing resizeCanvas function with the new logic
 const resizeCanvas = () => {
-  canvas.width = drawingZone.clientWidth;
-  canvas.height = drawingZone.clientHeight;
+  const aspectRatio = (xMax - xMin) / (yMax - yMin);
+
+  // Get available space
+  const maxHeight = window.innerHeight * 0.6; // 60% of viewport height
+  const maxWidth = window.innerWidth * 0.8;  // 80% of viewport width
+
+  // Calculate dimensions based on the aspect ratio
+  let canvasHeight = maxHeight;
+  let canvasWidth = canvasHeight * aspectRatio;
+
+  if (canvasWidth > maxWidth) {
+    canvasWidth = maxWidth;
+    canvasHeight = canvasWidth / aspectRatio;
+  }
+
+  // Apply the calculated dimensions to the canvas
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
+
+  // Dynamically adjust the parent div
+  drawingZone.style.width = `${canvasWidth}px`;
+  drawingZone.style.height = `${canvasHeight}px`;
+
+  // Update canvas context styles
   ctx.lineWidth = 5;
   ctx.lineCap = 'round';
   ctx.strokeStyle = 'black';
-};
+
+  console.log(`Canvas resized to: ${canvasWidth} x ${canvasHeight}`);
+  console.log(`Drawing zone resized to: ${drawingZone.style.width} x ${drawingZone.style.height}`);
+}
+
+
 resizeCanvas();
 
 const startDrawing = (event) => {
@@ -76,41 +108,6 @@ const drawStroke = (stroke, smooth) => {
   ctx.stroke();
 };
 
-backButton.addEventListener('click', () => {
-  if (savedStrokes.length > 0) {
-    savedStrokes.pop();
-    redrawCanvas();
-  }
-});
-
-clearButton.addEventListener('click', () => {
-  savedStrokes.length = 0;
-  redrawCanvas();
-});
-
-penUpButton.addEventListener('click', () => {
-  fetch("/penUp", { method: "GET" })
-    .then(response => response.text())
-    .then(data => console.log("Response from ESP32:", data))
-    .catch(error => console.error("Error during fetch:", error));
-});
-
-penDownButton.addEventListener('click', () => {
-  fetch("/penUp?down=true", { method: "GET" })
-    .then(response => response.text())
-    .then(data => console.log("Response from ESP32:", data))
-    .catch(error => console.error("Error during fetch:", error));
-});
-
-drawCircleButton.addEventListener('click', () => {
-  const url = `/drawCircle?x=${circleX.value}&y=${circleY.value}&r=${circleR.value}&s=${circleSteps.value}&lc=${leftServoCorrection.value}&rc=${rightServoCorrection.value}`;
-  console.log(`URL: ${url}`);
-  fetch(url, { method: "GET" })
-    .then(response => response.text())
-    .then(data => console.log("Response from ESP32:", data))
-    .catch(error => console.error("Error during fetch:", error));
-});
-
 const setCorrections = () => {
   const url = `/setCorrections?lc=${leftServoCorrection.value}&rc=${rightServoCorrection.value}`;
   console.log(`URL: ${url}`);
@@ -120,16 +117,94 @@ const setCorrections = () => {
     .catch(error => console.error("Error during fetch:", error));
 };
 
-drawButton.addEventListener("click", () => {
-  uploadDrawing();
-  const speedDelay = document.getElementById('speedDelay');
-  const url = `/draw?speedDelay=${speedDelay ? speedDelay.value : 0}&penUp=${penUpAngle.value}&penDown=${penDownAngle.value}`;
-  console.log(`URL: ${url}`);
-  fetch(url, { method: "GET" })
+
+const getRobotParams = () => {
+  console.log(`getting robot parameters...`);
+  fetch("/get_params", {
+    method: "GET"
+  })
     .then(response => response.text())
-    .then(data => console.log("Response from ESP32:", data))
-    .catch(error => console.error("Error during fetch:", error));
-});
+    .then(data => {
+      // Split the response into values
+      const [t1correction, t2correction, link1, link2, penUpAngle, penDownAngle, baseWidth, speedDelay] = data.split(";").map(parseFloat);
+
+      // Update HTML input fields
+      document.getElementById("leftServoCorrection").value = t1correction;
+      document.getElementById("rightServoCorrection").value = t2correction;
+      document.getElementById("link1Length").value = link1;
+      document.getElementById("link2Length").value = link2;
+      document.getElementById("penUpAngle").value = penUpAngle;
+      document.getElementById("penDownAngle").value = penDownAngle;
+      document.getElementById("bwLength").value = baseWidth;
+      document.getElementById("speedDelay").value = speedDelay; // Ensure speedDelay is included
+      console.log(`got response: l1corr: ${t1correction}, etc`);
+    })
+    .catch(error => {
+      console.error("Error fetching robot parameters:", error);
+    });
+};
+
+const sendRobotParams = () => {
+  console.log(`collecting robot parameters...`);
+
+  // Collect values from the HTML input fields
+  const t1correction = parseFloat(document.getElementById("leftServoCorrection").value) || 0;
+  const t2correction = parseFloat(document.getElementById("rightServoCorrection").value) || 0;
+  const link1 = parseFloat(document.getElementById("link1Length").value) || 0;
+  const link2 = parseFloat(document.getElementById("link2Length").value) || 0;
+  const penUpAngle = parseFloat(document.getElementById("penUpAngle").value) || 0;
+  const penDownAngle = parseFloat(document.getElementById("penDownAngle").value) || 0;
+  const baseWidth = parseFloat(document.getElementById("bwLength").value) || 0;
+  const drawDelay = parseInt(document.getElementById("speedDelay").value, 10) || 0; // Ensure integer
+
+  // Construct the URL with parameters
+  const url = `/set_params?t1=${t1correction}&t2=${t2correction}&link1=${link1}&link2=${link2}&penUp=${penUpAngle}&penDown=${penDownAngle}&baseWidth=${baseWidth}&delay=${drawDelay}`;
+
+  console.log(`sending params via GET: ${url}`);
+
+  // Send the GET request
+  fetch(url, {
+    method: "GET"
+  })
+    .then(response => {
+      if (response.ok) {
+        console.log("Parameters sent successfully");
+      } else {
+        console.error("Failed to send parameters");
+      }
+    })
+    .catch(error => {
+      console.error("Error sending parameters:", error);
+    });
+};
+
+const handleFileUpload = (event) => {
+  const file = event.target.files[0];
+  if (!file) {
+    alert("Please select a file to upload.");
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("file", file, file.name);
+
+  fetch("/uploadFile", {
+    method: "POST",
+    body: formData,
+  })
+    .then(response => response.text())
+    .then(data => {
+      console.log("Response from ESP32:", data);
+      alert(data);
+    })
+    .catch(error => console.error("Error:", error));
+};
+
+const toggleControls = () => {
+  const controlsDiv = document.getElementById('controls');
+  let isHidden = controlsDiv.style.display === 'none' || controlsDiv.style.display === '';
+  controlsDiv.style.display = isHidden ? 'flex' : 'none';
+}
 
 const interpolate = (value, srcMin, srcMax, dstMin, dstMax) => {
   if (srcMax === srcMin) {
@@ -139,10 +214,39 @@ const interpolate = (value, srcMin, srcMax, dstMin, dstMax) => {
   return dstMin + ((value - srcMin) * (dstMax - dstMin)) / (srcMax - srcMin);
 };
 
-let mirrorXAxis = true;
-let mirrorYAxis = true;
+const prepareDrawing = () => {
+  if (!savedStrokes || savedStrokes.length === 0) {
+    console.error("No strokes to upload.");
+    return;
+  }
 
-const uploadDrawing = () => {
+  const totalPoints = savedStrokes.reduce((sum, stroke) => sum + stroke.length, 0);
+  const totalFloatCount = totalPoints * 2 + savedStrokes.length * 2;
+  const floatView = new Float32Array(totalFloatCount);
+
+  let index = 0;
+  for (const stroke of savedStrokes) {
+    for (const coord of stroke) {
+      let interpolatedX = interpolate(coord.x, 0, canvas.width, xMin, xMax);
+      let interpolatedY = interpolate(coord.y, 0, canvas.height, yMax, yMin); // Note: Y inverted
+
+      if (mirrorYAxis) interpolatedX = xMin + xMax - interpolatedX;
+      if (mirrorXAxis) interpolatedY = yMin + yMax - interpolatedY;
+
+      floatView[index++] = interpolatedX;
+      floatView[index++] = interpolatedY;
+    }
+    // Add "pen up" marker
+    floatView[index++] = -300;
+    floatView[index++] = -300;
+  }
+
+  console.log("Interpolated and serialized data:", floatView);
+  uploadDrawing(floatView);
+};
+
+
+const prepareDrawingOld = () => {
   if (!savedStrokes || savedStrokes.length === 0) {
     console.error("No strokes to upload.");
     return;
@@ -176,8 +280,13 @@ const uploadDrawing = () => {
   }
 
   console.log("Interpolated and serialized data:", floatView);
+  
+  uploadDrawing(floatView);
 
-  fetch("/upload2", {
+};
+
+const uploadDrawing = (floatView) => {
+  fetch("/uploadDrawing", {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
     body: floatView,
@@ -185,6 +294,18 @@ const uploadDrawing = () => {
     .then(response => response.text())
     .then(data => console.log("Response from ESP32:", data))
     .catch(error => console.error("Error during fetch:", error));
+};
+
+const sendDrawCommad = () => {
+
+  sendRobotParams();  
+  const url = `/draw`;
+  console.log(`URL: ${url}`);
+  fetch(url, { method: "GET" })
+    .then(response => response.text())
+    .then(data => console.log("Response from ESP32:", data))
+    .catch(error => console.error("Error during fetch:", error));
+
 };
 
 const getX = (event) => {
@@ -197,6 +318,54 @@ const getY = (event) => {
   return (event.touches ? event.touches[0].clientY : event.clientY) - rect.top;
 };
 
+console.log('test');
+
+/* Event Listeners */
+
+
+backButton.addEventListener('click', () => {
+  if (savedStrokes.length > 0) {
+    savedStrokes.pop();
+    redrawCanvas();
+  }
+});
+
+clearButton.addEventListener('click', () => {
+  savedStrokes.length = 0;
+  redrawCanvas();
+});
+
+penUpButton.addEventListener('click', () => {
+  fetch("/penUp", { method: "GET" })
+    .then(response => response.text())
+    .then(data => console.log("Response from ESP32:", data))
+    .catch(error => console.error("Error during fetch:", error));
+});
+
+penDownButton.addEventListener('click', () => {
+  fetch("/penUp?down=true", { method: "GET" })
+    .then(response => response.text())
+    .then(data => console.log("Response from ESP32:", data))
+    .catch(error => console.error("Error during fetch:", error));
+});
+
+drawCircleButton.addEventListener('click', () => {
+
+  sendRobotParams();
+  const url = `/drawCircle?x=${circleX.value}&y=${circleY.value}&r=${circleR.value}&s=${circleSteps.value}&lc=${leftServoCorrection.value}&rc=${rightServoCorrection.value}`;
+  console.log(`URL: ${url}`);
+  fetch(url, { method: "GET" })
+    .then(response => response.text())
+    .then(data => console.log("Response from ESP32:", data))
+    .catch(error => console.error("Error during fetch:", error));
+});
+
+drawButton.addEventListener("click", () => {
+  prepareDrawing();
+  uploadDrawing();
+  sendDrawCommad();
+});
+
 canvas.addEventListener('mousedown', startDrawing);
 canvas.addEventListener('mouseup', stopDrawing);
 canvas.addEventListener('mousemove', draw);
@@ -204,39 +373,38 @@ canvas.addEventListener('touchstart', startDrawing);
 canvas.addEventListener('touchend', stopDrawing);
 canvas.addEventListener('touchmove', draw);
 
+document.getElementById('xMinInput').addEventListener('input', () => {
+  xMin = parseFloat(document.getElementById('xMinInput').value) || xMin;
+  resizeCanvas();
+});
+
+document.getElementById('xMaxInput').addEventListener('input', () => {
+  xMax = parseFloat(document.getElementById('xMaxInput').value) || xMax;
+  resizeCanvas();
+});
+
+document.getElementById('yMinInput').addEventListener('input', () => {
+  yMin = parseFloat(document.getElementById('yMinInput').value) || yMin;
+  resizeCanvas();
+});
+
+document.getElementById('yMaxInput').addEventListener('input', () => {
+  yMax = parseFloat(document.getElementById('yMaxInput').value) || yMax;
+  resizeCanvas();
+});
+
+
+
+// Ensure it gets called on window resize
 window.addEventListener('resize', () => {
   const tempCanvas = document.createElement('canvas');
   tempCanvas.width = canvas.width;
   tempCanvas.height = canvas.height;
   tempCanvas.getContext('2d').drawImage(canvas, 0, 0);
+
   resizeCanvas();
   ctx.drawImage(tempCanvas, 0, 0);
 });
 
-const handleFileUpload = (event) => {
-  const file = event.target.files[0];
-  if (!file) {
-    alert("Please select a file to upload.");
-    return;
-  }
 
-  const formData = new FormData();
-  formData.append("file", file, file.name);
-
-  fetch("/uploadFile", {
-    method: "POST",
-    body: formData,
-  })
-    .then(response => response.text())
-    .then(data => {
-      console.log("Response from ESP32:", data);
-      alert(data);
-    })
-    .catch(error => console.error("Error:", error));
-};
-
-const toggleControls = () => {
-  const controlsDiv = document.getElementById('controls');
-  let isHidden = controlsDiv.style.display === 'none' || controlsDiv.style.display === '';
-  controlsDiv.style.display = isHidden ? 'flex' : 'none';
-}
+getRobotParams();

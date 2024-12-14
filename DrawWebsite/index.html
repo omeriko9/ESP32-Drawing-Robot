@@ -15,11 +15,18 @@
       </label>
       <label for="speedDelay">Speed Delay:</label>
       <input type="text" id="speedDelay" value="0">
+      <label for="link1Length">link1 length:</label>
+      <input id="link1Length" type="number" value="10.5">
+      <label for="link2Length">link2 length:</label>
+      <input id="link2Length" type="number" value="10.5">
+      <label for="bwLength">base width length:</label>
+      <input id="bwLength" type="number" value="7">
       <button id="uploadDrawingButton">Upload Drawing</button>
       <label for="fileInput" class="file-label">Upload File</label>
-      <input type="file" id="fileInput">
+      <input type="file" id="fileInput" onchange="handleFileUpload(event)">
     </div>
     <div class="control-group">
+      
       <button id="btnPickPenUp">Pen Up</button>
       <label for="penUpAngle">Servo angle:</label>
       <input id="penUpAngle" type="number" value="60">
