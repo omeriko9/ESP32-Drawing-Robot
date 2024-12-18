@@ -16,9 +16,9 @@
       <label for="speedDelay">Speed Delay:</label>
       <input type="text" id="speedDelay" value="0">
       <label for="link1Length">link1 length:</label>
-      <input id="link1Length" type="number" value="10.5">
+      <input id="link1Length" type="number" value="10">
       <label for="link2Length">link2 length:</label>
-      <input id="link2Length" type="number" value="10.5">
+      <input id="link2Length" type="number" value="11">
       <label for="bwLength">base width length:</label>
       <input id="bwLength" type="number" value="7">
       <button id="uploadDrawingButton">Upload Drawing</button>
@@ -52,25 +52,70 @@
     </div>
     <div class="control-group">
       <label for="xMinInput">xMin:</label>
-      <input id="xMinInput" type="number" value="-4">
+      <input id="xMinInput" type="number" value="-7">
       <label for="xMaxInput">xMax:</label>
-      <input id="xMaxInput" type="number" value="4">
+      <input id="xMaxInput" type="number" value="14">
       <label for="yMinInput">yMin:</label>
-      <input id="yMinInput" type="number" value="10">
+      <input id="yMinInput" type="number" value="9">
       <label for="yMaxInput">yMax:</label>
-      <input id="yMaxInput" type="number" value="18">
+      <input id="yMaxInput" type="number" value="20">
+
     </div>
   </div>
   <div class="main-controls">
     <button id="backButton">Back</button>
     <button id="clearButton">Clear</button>
     <button id="drawButton" class="draw-button">Draw</button>
+    <button id="simDrawButton" class="draw-button">Simulate Draw</button>
     <input id="chkAdvanced" type="checkbox" onchange="toggleControls();">
     <label for="chkAdvanced">Advanced</label>
   </div>
-  <div id="drawingZone">
-    <canvas id="drawingCanvas"></canvas>
+  <div id="container" style="display: flex; justify-content: space-between; align-items: flex-start;">
+      <div id="drawingZone">
+          <canvas id="drawingCanvas"></canvas>
+      </div>
+      <div id="mechanismZone" style="display: flex; flex-direction: row; align-items: center; min-width: 600px; width: auto;
+      min-height:400px; height: auto;">
+        <div id="canvasContainer" style="position: relative; width: 600px; height: 500px;">
+              <canvas id="mechanismCanvas" style="border: 1px solid #ddd; cursor: crosshair;"></canvas>
+              <canvas id="trailCanvas" style="position: absolute; top: 0; left: 0; pointer-events: none;"></canvas>
+          </div>
+      </div>
   </div>
+
+
+
+  <div id="controls" style="display:none;">
+    <label for="canvasWidth">CanvasOutput Width:</label>
+    <input type="number" id="canvasWidth" value="400" />
+    <label for="canvasHeight">CanvasOutput Height:</label>
+    <input type="number" id="canvasHeight" value="300" />
+    <br/><br/>
+    
+    <label for="midXoutput">Midpoint X:</label>
+    <input type="number" id="midXoutput" value="150" />
+    <label for="midYoutput">Midpoint Y:</label>
+    <input type="number" id="midYoutput" value="250" />
+    <br/><br/>
+    
+    <label for="endXoutput">End Effector X:</label>
+    <input type="number" id="endXoutput" value="33" step="10"/>
+    <label for="endYoutput">End Effector Y:</label>
+    <input type="number" id="endYoutput" value="124" step="10"/>
+    
+    <!-- <button id="drawButton">Draw Mechanism</button> -->
+
+    <br/><br/>
+
+    <label for="theta1val">Theta1:</label>
+    <input type="number" id="theta1val" value="" />
+    <label for="theta2val">Theta2:</label>
+    <input type="number" id="theta2val" value="" />
+  </div>
+
+
   <script src="script.js"></script>
+  <script src="output.js"></script>
+
 </body>
 </html>

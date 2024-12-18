@@ -13,8 +13,8 @@ const drawCircleButton = document.getElementById('btnDrawCircle');
 const drawingZone = document.getElementById('drawingZone');
 const savedStrokes = []; // Stores all strokes
 
-let xMin = -10, xMax = 10;
-let yMin = 5, yMax = 24;
+let xMin = parseFloat(document.getElementById('xMinInput').value), xMax = parseFloat(document.getElementById('xMaxInput').value);
+let yMin = parseFloat(document.getElementById('yMinInput').value), yMax = parseFloat(document.getElementById('yMaxInput').value);
 let isDrawing = false;
 let points = [];
 
@@ -52,12 +52,11 @@ const resizeCanvas = () => {
   ctx.lineCap = 'round';
   ctx.strokeStyle = 'black';
 
-  console.log(`Canvas resized to: ${canvasWidth} x ${canvasHeight}`);
-  console.log(`Drawing zone resized to: ${drawingZone.style.width} x ${drawingZone.style.height}`);
+  //console.log(`Canvas resized to: ${canvasWidth} x ${canvasHeight}`);
+  //console.log(`Drawing zone resized to: ${drawingZone.style.width} x ${drawingZone.style.height}`);
 }
-
-
 resizeCanvas();
+
 
 const startDrawing = (event) => {
   isDrawing = true;
@@ -119,6 +118,10 @@ const setCorrections = () => {
 
 
 const getRobotParams = () => {
+
+  if (window.location.href.startsWith('file'))
+    return;
+
   console.log(`getting robot parameters...`);
   fetch("/get_params", {
     method: "GET"
@@ -211,8 +214,48 @@ const interpolate = (value, srcMin, srcMax, dstMin, dstMax) => {
     console.error("Source range cannot be zero.");
     return dstMin; // Safe fallback
   }
-  return dstMin + ((value - srcMin) * (dstMax - dstMin)) / (srcMax - srcMin);
+  
+  let calc = dstMin + ((value - srcMin) * (dstMax - dstMin)) / (srcMax - srcMin);
+  //calc *= 1.5;
+  console.log(`value: ${value}, srcMin: ${srcMin}, srcMax: ${srcMax}, dstMin: ${dstMin}, dstMax: ${dstMax}, calc: ${calc}`);
+  return calc;
+
 };
+
+function mirrorStrokes(savedStrokes, canvasHeight) {
+    return savedStrokes.map(stroke => 
+        stroke.map(point => ({
+            x: point.x,
+            y: canvasHeight - point.y
+        }))
+    );
+}
+
+function transformStrokes(savedStrokes, originalCanvas) {
+    const xScale = (xMax - xMin) / originalCanvas.width;
+    const yScale = (yMax - yMin) / originalCanvas.height;
+
+    return savedStrokes.map(stroke =>
+        stroke.map(point => ({
+            x: point.x * xScale + xMin,
+            y: point.y * yScale + yMin
+        }))
+    );
+}
+
+function stretchStrokes(strokes, stretchX = 1, stretchY = 1) {
+    // Find the minimum Y value across all strokes
+    const minY = Math.min(
+        ...strokes.flat().map(point => point.y)
+    );
+
+    return strokes.map(stroke =>
+        stroke.map(point => ({
+            x: point.x * stretchX,
+            y: minY + (point.y - minY) * stretchY // Stretch relative to minY
+        }))
+    );
+}
 
 const prepareDrawing = () => {
   if (!savedStrokes || savedStrokes.length === 0) {
@@ -220,21 +263,23 @@ const prepareDrawing = () => {
     return;
   }
 
-  const totalPoints = savedStrokes.reduce((sum, stroke) => sum + stroke.length, 0);
-  const totalFloatCount = totalPoints * 2 + savedStrokes.length * 2;
+  let interpolatedStrokes = transformStrokes(mirrorStrokes(savedStrokes, canvas.height), canvas);
+  //interpolatedStrokes = stretchStrokes(interpolatedStrokes, 1, 1.1);
+  const totalPoints = interpolatedStrokes.reduce((sum, stroke) => sum + stroke.length, 0);
+  const totalFloatCount = totalPoints * 2 + interpolatedStrokes.length * 2;
   const floatView = new Float32Array(totalFloatCount);
 
   let index = 0;
-  for (const stroke of savedStrokes) {
+  for (const stroke of interpolatedStrokes) {
     for (const coord of stroke) {
-      let interpolatedX = interpolate(coord.x, 0, canvas.width, xMin, xMax);
-      let interpolatedY = interpolate(coord.y, 0, canvas.height, yMax, yMin); // Note: Y inverted
+      // let interpolatedX = interpolate(coord.x, 0, canvas.width, xMin, xMax);
+      // let interpolatedY = interpolate(coord.y, 0, canvas.height, yMax, yMin); // Note: Y inverted
 
-      if (mirrorYAxis) interpolatedX = xMin + xMax - interpolatedX;
-      if (mirrorXAxis) interpolatedY = yMin + yMax - interpolatedY;
+      // if (mirrorYAxis) interpolatedX = xMin + xMax - interpolatedX;
+      // if (mirrorXAxis) interpolatedY = yMin + yMax - interpolatedY;
 
-      floatView[index++] = interpolatedX;
-      floatView[index++] = interpolatedY;
+      floatView[index++] = coord.x; //interpolatedX;
+      floatView[index++] = coord.y; // interpolatedY;
     }
     // Add "pen up" marker
     floatView[index++] = -300;
@@ -242,7 +287,9 @@ const prepareDrawing = () => {
   }
 
   console.log("Interpolated and serialized data:", floatView);
-  uploadDrawing(floatView);
+
+  return floatView;
+  
 };
 
 
@@ -269,6 +316,7 @@ const prepareDrawingOld = () => {
   for (const stroke of savedStrokes) {
     for (const coord of stroke) {
       const interpolatedX = interpolate(coord.x, srcXMin, srcXMax, xMin, xMax);
+      console.log(`interpolated X: ${interpolatedX}`);
       const interpolatedY = interpolate(coord.y, srcYMin, srcYMax, yMax, yMin);
       const finalX = mirrorYAxis ? xMin + xMax - interpolatedX : interpolatedX;
       const finalY = mirrorXAxis ? yMin + yMax - interpolatedY : interpolatedY;
@@ -285,7 +333,7 @@ const prepareDrawingOld = () => {
 
 };
 
-const uploadDrawing = (floatView) => {
+const uploadDrawing = (floatView, shouldDraw) => {
   fetch("/uploadDrawing", {
     method: "POST",
     headers: { "Content-Type": "application/octet-stream" },
@@ -293,6 +341,7 @@ const uploadDrawing = (floatView) => {
   })
     .then(response => response.text())
     .then(data => console.log("Response from ESP32:", data))
+    .then(() => { if (shouldDraw) { sendDrawCommad(); } })
     .catch(error => console.error("Error during fetch:", error));
 };
 
@@ -361,9 +410,14 @@ drawCircleButton.addEventListener('click', () => {
 });
 
 drawButton.addEventListener("click", () => {
-  prepareDrawing();
-  uploadDrawing();
-  sendDrawCommad();
+  let floatView = prepareDrawing();
+  uploadDrawing(floatView, true);
+});
+
+simDrawButton.addEventListener("click", () => {
+     let floatView = prepareDrawing();
+     let delay = parseInt(document.getElementById("speedDelay").value, 10) || 0;
+     drawFromFloatArray(floatView, delay);
 });
 
 canvas.addEventListener('mousedown', startDrawing);
@@ -408,3 +462,7 @@ window.addEventListener('resize', () => {
 
 
 getRobotParams();
+
+
+
+// 5 bar planar

@@ -13,10 +13,9 @@
 #include <nvs_flash.h>
 #include <esp_task_wdt.h>
 
-
-float link1 = 10.0;  //11.5; 
-float link2 = 11; //11.5;
-float baseWidth = 7.0;
+float link1 = 11.0;  //11.5; 
+float link2 = 12; //11.5;
+float baseWidth = 4.0;
 
 String ssid = "";
 String password = "";
@@ -131,9 +130,6 @@ void HandleOTA()
   ArduinoOTA.begin();
 }
 
-
-
-
 void saveCredentials(const String &ssid, const String &password) {
     preferences.begin("wifi", false); // Open preferences with namespace "wifi"
     preferences.putString("ssid", ssid);
@@ -195,6 +191,8 @@ bool forwardKinematics(float theta1_deg, float theta2_deg, float &x, float &y) {
     // Upper solution:
     x = Mx - h*uy;
     y = My + h*ux;
+
+    esp_task_wdt_reset();
 
     return true;
 }
@@ -524,7 +522,7 @@ void clearAllCredentials() {
     Serial.println("All Wi-Fi credentials cleared.");
 }
 
-#include "esp_task_wdt.h"
+
 
 void reenable_task_wdt() {
     // Task Watchdog configuration
@@ -744,6 +742,7 @@ void startServer() {
 
     // Serve the JavaScript file
     server.serveStatic("/script.js", SPIFFS, "/script.js");
+    server.serveStatic("/output.js", SPIFFS, "/output.js");
 
     // Serve the CSS file
     server.serveStatic("/styles.css", SPIFFS, "/styles.css");
@@ -764,6 +763,7 @@ void startServer() {
     });
 
     server.on("setCorrections", HTTP_GET,[](AsyncWebServerRequest *request) { 
+
         float lc = request->getParam("lc")->value().toFloat();
         float rc = request->getParam("rc")->value().toFloat();
 
@@ -775,7 +775,7 @@ void startServer() {
         request->send(200, "text/plain", "OK");
     });
 
-     server.on("/drawCircle", HTTP_GET,[](AsyncWebServerRequest *request) { 
+    server.on("/drawCircle", HTTP_GET,[](AsyncWebServerRequest *request) { 
       
         int x = request->getParam("x")->value().toFloat();
         int y = request->getParam("y")->value().toFloat();
@@ -789,7 +789,6 @@ void startServer() {
         t2correction=rc;
         drawCircle(x,y,r,s);
         request->send(200, "text/plain", "OK");
-
        
     });
 
